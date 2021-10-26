@@ -1,0 +1,16 @@
+image:
+  repository: IMAGE_REPOSITORY
+  tag: TAG
+  pullPolicy: Always
+
+replicaCount: 1
+
+service:
+  name: frontend
+  type: ClusterIP
+  externalPort: 8080
+  internalPort: 8080
+
+env:
+  name : BACKEND_HOSTNAME
+  value: backend

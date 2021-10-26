@@ -1,0 +1,123 @@
+image: hasanalperen/dgk
+
+stages:
+    - test
+    - build_app
+    - build_image
+    - helm_create
+    - helm_deploy
+    - backend_test
+    - prod_deploy
+
+variables:
+    CONTAINER_IMAGE: $CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
+    REGISTRY_USER: "hasanalperen"
+    REGISTRY_PASSWORD: "Alpi1029*"
+    DOCKER_DRIVER: overlay2
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_TLS_CERTDIR: ""
+    HELM_REPO: "http://chart-34-88-36-161.nip.io:8080"
+    HELM_VERSION: "0.1.0-$CI_COMMIT_SHORT_SHA"
+    SVC_PORT: 8081
+    IMAGE_REPO: "hasanalperen/$CI_PROJECT_NAME"
+    APP_NAME: backend
+
+before_script:
+    - echo $CONTAINER_IMAGE
+
+lint_test:
+    stage: test
+    script:
+        - echo "lint test OK"
+    tags:
+        - be
+
+maven_test:
+    image: adoptopenjdk/maven-openjdk11
+    stage: test
+    script:
+        - mvn clean verify
+    tags: 
+        - be
+
+
+build_app:
+    image: adoptopenjdk/maven-openjdk11
+    stage: build_app
+    artifacts:
+        paths:
+            - target/todo-backend.jar
+    script: 
+        - echo "java build"
+        - mvn clean package
+    tags:
+        - mvn
+
+build_image:
+    image: docker
+    services: 
+        - name: docker:20-dind
+          alias: docker
+          command: ["--tls=false"]
+    stage: build_image
+    script:
+        - sleep 5
+        - docker login -u $REGISTRY_USER -p $REGISTRY_PASSWORD
+        - ls target/
+        - docker build -t $REGISTRY_USER/$CONTAINER_IMAGE .
+        - docker push $REGISTRY_USER/$CONTAINER_IMAGE
+        - rm -rf /var/run/docker.sock
+    tags: 
+        - be
+
+helm_create:
+    image: dtzar/helm-kubectl
+    stage: helm_create
+    script:
+        - sleep 2
+        - ls
+        - sed -ri 's,IMAGE_REPOSITORY,'"$IMAGE_REPO"',g' chart/values.yaml
+        - sed -ri 's/TAG/'"$CI_COMMIT_SHORT_SHA"'/g' chart/values.yaml
+        - sed -ri 's/app/'"$APP_NAME"'/g' chart/Chart.yaml
+        - cat chart/values.yaml
+        - cat chart/Chart.yaml
+        - helm package chart --version=$HELM_VERSION
+        - curl -L --data-binary @$APP_NAME-$HELM_VERSION.tgz $HELM_REPO/api/charts
+    tags:
+        - helm
+
+helm_deploy:
+    image: hasanalperen/gcph
+    stage: helm_deploy
+    script:
+        - sleep 2
+        - gcloud projects list
+        - gcloud container clusters get-credentials mdns-cluster --zone us-west1-a --project playground-328211
+        - helm repo add chartmuseum ${HELM_REPO}
+        - helm repo update
+        - helm upgrade $APP_NAME chartmuseum/$APP_NAME --version=$HELM_VERSION --create-namespace --namespace dev --install
+    tags:
+        - helm
+
+web_ui_test:
+    image: hasanalperen/gcph
+    stage: backend_test
+    script:
+        - output=$(curl --write-out "%{http_code}\n" "http://todo-35-233-202-5.nip.io/todos" --output output.txt --silent)
+        - if [ ${output} == '200' ]; then echo 'APP OK'; else exit 1; fi
+    tags:
+        - be
+
+prod_deploy:
+    image: hasanalperen/gcph
+    stage: prod_deploy
+    script:
+        - sleep 2
+        - gcloud projects list
+        - gcloud container clusters get-credentials mdns-cluster --zone us-west1-a --project playground-328211
+        - helm repo add chartmuseum ${HELM_REPO}
+        - helm repo update
+        - helm upgrade $APP_NAME chartmuseum/$APP_NAME --version=$HELM_VERSION --create-namespace --namespace prod --install
+    tags:
+        - helm
+    when: manual
